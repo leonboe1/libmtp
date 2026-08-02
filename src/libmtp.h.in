@@ -6,6 +6,7 @@
  * Copyright (C) 2005-2008 Richard A. Low <richard@wentnet.com>
  * Copyright (C) 2007 Ted Bullock <tbullock@canada.com>
  * Copyright (C) 2008 Florent Mertens <flomertens@gmail.com>
+ * Modified: 2026-08-02.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -453,7 +454,8 @@ typedef enum {
   LIBMTP_ERROR_NO_DEVICE_ATTACHED,
   LIBMTP_ERROR_STORAGE_FULL,
   LIBMTP_ERROR_CONNECTING,
-  LIBMTP_ERROR_CANCELLED
+  LIBMTP_ERROR_CANCELLED,
+  LIBMTP_ERROR_REPLUG_REQUIRED
 } LIBMTP_error_number_t;
 
 typedef struct LIBMTP_device_entry_struct LIBMTP_device_entry_t; /**< @see LIBMTP_device_entry_struct */
@@ -839,7 +841,7 @@ int LIBMTP_Get_Supported_Devices_List(LIBMTP_device_entry_t ** const, int * cons
 LIBMTP_error_number_t LIBMTP_Detect_Raw_Devices(LIBMTP_raw_device_t **, int *);
 int LIBMTP_Check_Specific_Device(int busno, int devno);
 LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device(LIBMTP_raw_device_t *);
-LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *);
+LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *, LIBMTP_error_number_t *);
 /* Begin old, legacy interface */
 LIBMTP_mtpdevice_t *LIBMTP_Get_Device(int);
 LIBMTP_mtpdevice_t *LIBMTP_Get_First_Device(void);
@@ -1096,4 +1098,3 @@ int LIBMTP_Custom_Operation(LIBMTP_mtpdevice_t *, uint16_t, int, ...);
 #endif
 
 #endif /* LIBMTP_H_INCLUSION_GUARD */
-

@@ -6,6 +6,7 @@
  * Copyright (C) 2007 Ted Bullock <tbullock@canada.com>
  * Copyright (C) 2007 Tero Saarni <tero.saarni@gmail.com>
  * Copyright (C) 2008 Florent Mertens <flomertens@gmail.com>
+ * Modified: 2026-08-02.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -1916,9 +1917,12 @@ static void parse_extension_descriptor(LIBMTP_mtpdevice_t *mtpdevice,
  * several devices can come and go as the library is working
  * on a certain device.
  * @param rawdevice the raw device to open a "real" device for.
+ * @param returned_error optional output for the reason opening failed.
  * @return an open device.
  */
-LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevice)
+LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(
+    LIBMTP_raw_device_t *rawdevice,
+    LIBMTP_error_number_t *returned_error)
 {
   LIBMTP_mtpdevice_t *mtp_device;
   uint8_t bs = 0;
@@ -1926,6 +1930,10 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
   PTP_USB *ptp_usb;
   LIBMTP_error_number_t err;
   unsigned int i;
+
+  if (returned_error != NULL) {
+    *returned_error = LIBMTP_ERROR_NONE;
+  }
 
   /* Allocate dynamic space for our device */
   mtp_device = (LIBMTP_mtpdevice_t *) malloc(sizeof(LIBMTP_mtpdevice_t));
@@ -1939,6 +1947,10 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
 	    "allocation error with device %d on bus %d, trying to continue",
 	    rawdevice->devnum, rawdevice->bus_location);
 
+    if (returned_error != NULL) {
+      *returned_error = LIBMTP_ERROR_MEMORY_ALLOCATION;
+    }
+
     return NULL;
   }
   memset(mtp_device, 0, sizeof(LIBMTP_mtpdevice_t));
@@ -1949,6 +1961,9 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
   current_params = (PTPParams *) malloc(sizeof(PTPParams));
   if (current_params == NULL) {
     free(mtp_device);
+    if (returned_error != NULL) {
+      *returned_error = LIBMTP_ERROR_MEMORY_ALLOCATION;
+    }
     return NULL;
   }
   memset(current_params, 0, sizeof(PTPParams));
@@ -1974,6 +1989,9 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
 	    "Too old stdlibc, glibc and libiconv?\n");
     free(current_params);
     free(mtp_device);
+    if (returned_error != NULL) {
+      *returned_error = LIBMTP_ERROR_GENERAL;
+    }
     return NULL;
   }
 #endif
@@ -1990,6 +2008,9 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
 #endif
     free(current_params);
     free(mtp_device);
+    if (returned_error != NULL) {
+      *returned_error = err;
+    }
     return NULL;
   }
   ptp_usb = (PTP_USB*) mtp_device->usbinfo;
@@ -2012,6 +2033,9 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
     free(mtp_device->params);
     current_params = NULL;
     free(mtp_device);
+    if (returned_error != NULL) {
+      *returned_error = LIBMTP_ERROR_CONNECTING;
+    }
     return NULL;
   }
 
@@ -2207,7 +2231,7 @@ LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device_Uncached(LIBMTP_raw_device_t *rawdevi
 
 LIBMTP_mtpdevice_t *LIBMTP_Open_Raw_Device(LIBMTP_raw_device_t *rawdevice)
 {
-  LIBMTP_mtpdevice_t *mtp_device = LIBMTP_Open_Raw_Device_Uncached(rawdevice);
+  LIBMTP_mtpdevice_t *mtp_device = LIBMTP_Open_Raw_Device_Uncached(rawdevice, NULL);
 
   if (mtp_device == NULL)
     return NULL;
