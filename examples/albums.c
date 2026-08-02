@@ -4,6 +4,7 @@
  *
  * Copyright (C) 2006 Chris A. Debenham <chris@adebenham.com>
  * Copyright (C) 2007 Ted Bullock <tbullock@canada.com>
+ * Modified: 2026-08-02.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -125,7 +126,7 @@ int main (int argc, char *argv[]) {
     LIBMTP_devicestorage_t *storage;
     char *friendlyname;
 
-    device = LIBMTP_Open_Raw_Device_Uncached(&rawdevices[i]);
+    device = LIBMTP_Open_Raw_Device_Uncached(&rawdevices[i], NULL);
     if (device == NULL) {
       fprintf(stderr, "Unable to open raw device %d\n", i);
       continue;
@@ -155,4 +156,3 @@ int main (int argc, char *argv[]) {
   printf("OK.\n");
   return 0;
 }
-

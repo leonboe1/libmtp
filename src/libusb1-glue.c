@@ -7,6 +7,7 @@
  * Copyright (C) 2006-2012 Marcus Meissner
  * Copyright (C) 2007 Ted Bullock
  * Copyright (C) 2008 Chris Bagwell <chris@cnpbagwell.com>
+ * Modified: 2026-08-02.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -95,7 +96,7 @@ static const int mtp_device_table_size =
 
 // Local functions
 static LIBMTP_error_number_t init_usb();
-static void close_usb(PTP_USB* ptp_usb);
+static void close_usb(PTP_USB* ptp_usb, int reset_on_close);
 static int find_interface_and_endpoints(libusb_device *dev,
 					uint8_t *conf,
 					uint8_t *interface,
@@ -850,7 +851,14 @@ ptp_read_func (
   unsigned long usb_inep_maxpacket_size;
   unsigned long context_block_size_1;
   unsigned long context_block_size_2;
-  uint16_t ptp_dev_vendor_id = ptp_usb->rawdevice.device_entry.vendor_id;
+  uint16_t ptp_dev_vendor_id;
+
+  if (ptp_usb == NULL || ptp_usb->inep_maxpacket <= 0) {
+    LIBMTP_ERROR("LIBMTP PANIC: Invalid USB IN endpoint packet size\n");
+    return PTP_ERROR_IO;
+  }
+
+  ptp_dev_vendor_id = ptp_usb->rawdevice.device_entry.vendor_id;
 
   //"iRiver" device special handling
   if (ptp_dev_vendor_id == 0x4102 || ptp_dev_vendor_id == 0x1006) {
@@ -1066,6 +1074,11 @@ ptp_write_func (
   int ret = 0;
   unsigned long curwrite = 0;
   unsigned char *bytes;
+
+  if (ptp_usb == NULL || ptp_usb->outep_maxpacket <= 0) {
+    LIBMTP_ERROR("LIBMTP PANIC: Invalid USB OUT endpoint packet size\n");
+    return PTP_ERROR_IO;
+  }
 
   // This is the largest block we'll need to read in.
   bytes = malloc(CONTEXT_BLOCK_SIZE);
@@ -2089,7 +2102,7 @@ static void clear_stall(PTP_USB* ptp_usb)
   /* TODO: do we need this for INTERRUPT (ptp_usb->intep) too? */
 }
 
-static void close_usb(PTP_USB* ptp_usb)
+static void close_usb(PTP_USB* ptp_usb, int reset_on_close)
 {
   if (!FLAG_NO_RELEASE_INTERFACE(ptp_usb)) {
     /*
@@ -2105,7 +2118,7 @@ static void close_usb(PTP_USB* ptp_usb)
     clear_stall(ptp_usb);
     libusb_release_interface(ptp_usb->handle, (int) ptp_usb->interface);
   }
-  if (FLAG_FORCE_RESET_ON_CLOSE(ptp_usb)) {
+  if (reset_on_close && FLAG_FORCE_RESET_ON_CLOSE(ptp_usb)) {
     /*
      * Some devices really love to get reset after being
      * disconnected. Again, since Windows never disconnects
@@ -2175,6 +2188,10 @@ static int find_interface_and_endpoints(libusb_device *dev,
 	// one interrupt endpoint and FAIL if we cannot, and continue.
 	for (l = 0; l < no_ep; l++) {
 	  if (ep[l].bmAttributes == LIBUSB_TRANSFER_TYPE_BULK) {
+	    if (ep[l].wMaxPacketSize == 0) {
+	      LIBMTP_ERROR("LIBMTP PANIC: Ignoring bulk endpoint with zero packet size\n");
+	      continue;
+	    }
 	    if ((ep[l].bEndpointAddress & LIBUSB_ENDPOINT_DIR_MASK) ==
 		LIBUSB_ENDPOINT_DIR_MASK) {
 	      *inep = ep[l].bEndpointAddress;
@@ -2318,26 +2335,11 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
    * have not used LIBMTP_Release_Device on exit
    */
   if ((ret = ptp_opensession(params, 1)) == PTP_ERROR_IO) {
-    LIBMTP_ERROR("PTP_ERROR_IO: failed to open session, trying again after resetting USB interface\n");
-    LIBMTP_ERROR("LIBMTP libusb: Attempt to reset device\n");
-    libusb_reset_device (ptp_usb->handle);
-    close_usb(ptp_usb);
-
-    if(init_ptp_usb(params, ptp_usb, ldevice) <0) {
-      LIBMTP_ERROR("LIBMTP PANIC: Could not init USB on second attempt\n");
-      libusb_free_device_list (devs, 0);
-      free (ptp_usb);
-      return LIBMTP_ERROR_CONNECTING;
-    }
-
-    /* Normal timeout will have been restored by init_ptp_usb */
-    /* Device has been reset, try again */
-    if ((ret = ptp_opensession(params, 1)) == PTP_ERROR_IO) {
-      LIBMTP_ERROR("LIBMTP PANIC: failed to open session on second attempt\n");
-      libusb_free_device_list (devs, 0);
-      free (ptp_usb);
-      return LIBMTP_ERROR_CONNECTING;
-    }
+    LIBMTP_ERROR("PTP_ERROR_IO: failed to open session; close without resetting and ask the user to reconnect the device\n");
+    close_usb(ptp_usb, 0);
+    libusb_free_device_list (devs, 0);
+    free (ptp_usb);
+    return LIBMTP_ERROR_REPLUG_REQUIRED;
   }
 
   /* Was the transaction id invalid? Try again */
@@ -2371,7 +2373,7 @@ void close_device (PTP_USB *ptp_usb, PTPParams *params)
 {
   if (ptp_closesession(params)!=PTP_RC_OK)
     LIBMTP_ERROR("ERROR: Could not close session!\n");
-  close_usb(ptp_usb);
+  close_usb(ptp_usb, 1);
 }
 
 void set_usb_device_timeout(PTP_USB *ptp_usb, int timeout)

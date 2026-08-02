@@ -3,6 +3,7 @@
  * List all files and folders of all storages recursively
  *
  * Copyright (C) 2011 Linus Walleij <triad@df.lth.se>
+ * Modified: 2026-08-02.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -120,7 +121,7 @@ int main (int argc, char **argv)
     char *friendlyname;
     int ret;
 
-    device = LIBMTP_Open_Raw_Device_Uncached(&rawdevices[i]);
+    device = LIBMTP_Open_Raw_Device_Uncached(&rawdevices[i], NULL);
     if (device == NULL) {
       fprintf(stderr, "Unable to open raw device %d\n", i);
       continue;
