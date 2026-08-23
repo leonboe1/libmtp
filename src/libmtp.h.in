@@ -455,7 +455,8 @@ typedef enum {
   LIBMTP_ERROR_STORAGE_FULL,
   LIBMTP_ERROR_CONNECTING,
   LIBMTP_ERROR_CANCELLED,
-  LIBMTP_ERROR_REPLUG_REQUIRED
+  LIBMTP_ERROR_REPLUG_REQUIRED,
+  LIBMTP_ERROR_USB_INTERFACE_CLAIM
 } LIBMTP_error_number_t;
 
 typedef struct LIBMTP_device_entry_struct LIBMTP_device_entry_t; /**< @see LIBMTP_device_entry_struct */

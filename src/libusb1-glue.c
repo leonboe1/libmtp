@@ -115,7 +115,8 @@ static int find_interface_and_endpoints(libusb_device *dev,
 					int* intep);
 static void clear_stall(PTP_USB* ptp_usb);
 static int init_ptp_usb(PTPParams* params,
-		PTP_USB* ptp_usb, libusb_device* dev);
+		PTP_USB* ptp_usb, libusb_device* dev,
+		int* interface_claim_failed);
 static short ptp_write_func(unsigned long,
 		PTPDataHandler*, void *data, unsigned long*);
 static short ptp_read_func (unsigned long,
@@ -1927,12 +1928,14 @@ ptp_usb_control_device_status_request (PTPParams *params) {
     return ret;
 }
 
-static int init_ptp_usb(PTPParams* params, PTP_USB* ptp_usb, libusb_device* dev)
+static int init_ptp_usb(PTPParams* params, PTP_USB* ptp_usb, libusb_device* dev,
+                        int* interface_claim_failed)
 {
   libusb_device_handle *device_handle;
   unsigned char buf[255];
   int ret, usbresult;
   struct libusb_config_descriptor *config;
+  *interface_claim_failed = 0;
 
   params->sendreq_func=ptp_usb_sendreq;
   params->senddata_func=ptp_usb_senddata;
@@ -2008,6 +2011,9 @@ static int init_ptp_usb(PTPParams* params, PTP_USB* ptp_usb, libusb_device* dev)
 
   usbresult = libusb_claim_interface(device_handle, ptp_usb->interface);
   if (usbresult != 0) {
+    if (usbresult == LIBUSB_ERROR_ACCESS || usbresult == LIBUSB_ERROR_BUSY) {
+      *interface_claim_failed = 1;
+    }
     if (usbresult == LIBUSB_ERROR_BUSY)
       fprintf(stderr, "libusb_claim_interface() reports device is busy, likely in use by GVFS or KDE MTP device handling already");
     else
@@ -2255,6 +2261,7 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
   libusb_device **devs = NULL;
   struct libusb_device_descriptor desc;
   LIBMTP_error_number_t init_usb_ret;
+  int interface_claim_failed = 0;
 
   /* See if we can find this raw device again... */
   init_usb_ret = init_usb();
@@ -2340,11 +2347,11 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
   ptp_usb->bcdusb = desc.bcdUSB;
 
   /* Attempt to initialize this device */
-  if (init_ptp_usb(params, ptp_usb, ldevice) < 0) {
+  if (init_ptp_usb(params, ptp_usb, ldevice, &interface_claim_failed) < 0) {
     free (ptp_usb);
     LIBMTP_ERROR("LIBMTP PANIC: Unable to initialize device\n");
     libusb_free_device_list (devs, 0);
-    return LIBMTP_ERROR_CONNECTING;
+    return interface_claim_failed ? LIBMTP_ERROR_USB_INTERFACE_CLAIM : LIBMTP_ERROR_CONNECTING;
   }
 
   /* Special short timeout for the first trial of opensession. */
