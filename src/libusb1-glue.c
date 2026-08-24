@@ -1445,6 +1445,7 @@ ptp_usb_getdata (PTPParams* params, PTPContainer* ptp, PTPDataHandler *handler)
 	memset(&usbdata,0,sizeof(usbdata));
 	do {
 		unsigned long len, rlen;
+		uint64_t read_limit;
 
 		ret = ptp_usb_getpacket(params, &usbdata, &rlen);
 		if (ret != PTP_RC_OK) {
@@ -1478,6 +1479,16 @@ ptp_usb_getdata (PTPParams* params, PTPContainer* ptp, PTPDataHandler *handler)
 				break;
 			}
 		}
+		read_limit = dtoh32(usbdata.length);
+		if (read_limit == UINT32_MAX &&
+		    ptp->Code == PTP_OC_GetObject &&
+		    ptp_usb->callback_active &&
+		    ptp_usb->current_transfer_total > UINT32_MAX) {
+			/* current_transfer_total includes the 12-byte command header and
+			 * one 4-byte object handle, while rlen includes the 12-byte data
+			 * header. Use the known 64-bit object size as the bounded limit. */
+			read_limit = ptp_usb->current_transfer_total - sizeof(uint32_t);
+		}
 		if (rlen == ptp_usb->inep_maxpacket) {
 			/* Copy first part of data to 'data' */
 			putfunc_ret =
@@ -1508,9 +1519,9 @@ ptp_usb_getdata (PTPParams* params, PTPContainer* ptp, PTPDataHandler *handler)
 				if (readdata < 0x20000000)
 					break;
 				rlen += readdata;
-				/* upper limit of read dictated by packet size, to avoid reading forever
-				 * from malicious devices */
-				if (rlen > usbdata.length)
+				/* Bound the read by the declared or known transfer size to avoid
+				 * reading forever from malicious devices. */
+				if ((uint64_t) rlen > read_limit)
 					break;
 			}
 			return PTP_RC_OK;	/* FIXME: should we fallthrough in case we read more? */
