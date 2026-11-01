@@ -64,8 +64,9 @@ extern "C" {
   } while (0)
 
 #ifdef HAVE_LIBUSB1
-#define USB_BULK_READ libusb_bulk_transfer
-#define USB_BULK_WRITE libusb_bulk_transfer
+int ptp_usb_bulk_transfer(libusb_device_handle *, unsigned char, unsigned char *, int, int *, unsigned int);
+#define USB_BULK_READ ptp_usb_bulk_transfer
+#define USB_BULK_WRITE ptp_usb_bulk_transfer
 #endif
 #ifdef HAVE_LIBUSB0
 #define USB_BULK_READ usb_bulk_read
@@ -82,6 +83,10 @@ extern "C" {
 typedef struct _PTP_USB PTP_USB;
 struct _PTP_USB {
   PTPParams *params;
+  /* An OS cancellation failure leaves the handle owned by a pending transfer. */
+  int transfer_quarantined;
+  /* The response stream is uncertain; release USB without another PTP command. */
+  int session_abandoned;
 #ifdef HAVE_LIBUSB1
   libusb_device_handle* handle;
 #endif

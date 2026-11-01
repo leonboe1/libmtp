@@ -1064,6 +1064,8 @@ int LIBMTP_Set_Album_Name(LIBMTP_mtpdevice_t *, LIBMTP_album_t *, const char *);
 int LIBMTP_Delete_Object(LIBMTP_mtpdevice_t *, uint32_t);
 int LIBMTP_Move_Object(LIBMTP_mtpdevice_t *, uint32_t, uint32_t, uint32_t);
 int LIBMTP_Copy_Object(LIBMTP_mtpdevice_t *, uint32_t, uint32_t, uint32_t);
+/** Enables no-deadline cancellable reads on this thread; NULL restores normal waits. */
+void LIBMTP_Set_Cancellable_Wait(LIBMTP_mtpdevice_t *, int (*)(void *), void *);
 int LIBMTP_Set_Object_Filename(LIBMTP_mtpdevice_t *, uint32_t , char *);
 int LIBMTP_GetPartialObject(LIBMTP_mtpdevice_t *, uint32_t const,
                             uint64_t, uint32_t,

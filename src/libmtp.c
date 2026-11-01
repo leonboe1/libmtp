@@ -2546,6 +2546,10 @@ void LIBMTP_Release_Device(LIBMTP_mtpdevice_t *device)
   PTPParams *params = (PTPParams *) device->params;
   PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
 
+  /* A failed OS cancellation may still callback into its transfer. Retain this
+   * exceptional session until process exit instead of closing a live handle. */
+  if (ptp_usb->transfer_quarantined) return;
+
   close_device(ptp_usb, params);
   // Clear error stack
   LIBMTP_Clear_Errorstack(device);

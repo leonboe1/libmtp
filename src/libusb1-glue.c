@@ -924,9 +924,11 @@ ptp_read_func (
     LIBMTP_USB_DEBUG("Result of read: 0x%04x (%d bytes)\n", ret, xread);
 
     if (ret == LIBUSB_ERROR_TIMEOUT) {
+      free(bytes);
       return PTP_ERROR_TIMEOUT;
     }
     else if (ret != LIBUSB_SUCCESS){
+      free(bytes);
       return PTP_ERROR_IO;
     }
 
@@ -2144,10 +2146,10 @@ static void close_usb(PTP_USB* ptp_usb, int reset_on_close)
      * if the CLEAR_HALT is followed by a GET_STATUS (used to determine if the
      * STALL is persistant or not).
      */
-    clear_stall(ptp_usb);
+    if (!ptp_usb->session_abandoned) clear_stall(ptp_usb);
     libusb_release_interface(ptp_usb->handle, (int) ptp_usb->interface);
   }
-  if (reset_on_close && FLAG_FORCE_RESET_ON_CLOSE(ptp_usb)) {
+  if (reset_on_close && !ptp_usb->session_abandoned && FLAG_FORCE_RESET_ON_CLOSE(ptp_usb)) {
     /*
      * Some devices really love to get reset after being
      * disconnected. Again, since Windows never disconnects
@@ -2408,7 +2410,7 @@ LIBMTP_error_number_t configure_usb_device(LIBMTP_raw_device_t *device,
 
 void close_device (PTP_USB *ptp_usb, PTPParams *params)
 {
-  if (ptp_closesession(params)!=PTP_RC_OK)
+  if (!ptp_usb->session_abandoned && ptp_closesession(params)!=PTP_RC_OK)
     LIBMTP_ERROR("ERROR: Could not close session!\n");
   close_usb(ptp_usb, 1);
 }
