@@ -1,7 +1,7 @@
 lib_LTLIBRARIES = libmtp.la
 
 libmtp_la_CFLAGS = @LIBUSB_CFLAGS@
-libmtp_la_SOURCES = array.h compiletime-assert.h libmtp.c cancellable-operation.c unicode.c unicode.h util.c util.h playlist-spl.c \
+libmtp_la_SOURCES = array.h compiletime-assert.h libmtp.c cancellable-operation.c bounded-download.c unicode.c unicode.h util.c util.h playlist-spl.c \
 	gphoto2-endian.h _stdint.h ptp.c ptp.h libusb-glue.h \
 	music-players.h device-flags.h playlist-spl.h mtpz.h \
 	chdk_live_view.h chdk_ptp.h
@@ -18,10 +18,12 @@ endif
 if LIBUSB1_COMPILE
 libmtp_la_SOURCES += libusb1-glue.c
 
-check_PROGRAMS = cancellable-operation-tests
+check_PROGRAMS = cancellable-operation-tests bounded-download-tests
 TESTS = $(check_PROGRAMS)
 cancellable_operation_tests_SOURCES = cancellable-operation-tests.c cancellable-operation.c
 cancellable_operation_tests_CFLAGS = @LIBUSB_CFLAGS@
+bounded_download_tests_SOURCES = bounded-download-tests.c bounded-download.c
+bounded_download_tests_CFLAGS = @LIBUSB_CFLAGS@
 else
 EXTRA_DIST += libusb1-glue.c
 endif

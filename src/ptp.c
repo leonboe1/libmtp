@@ -2397,6 +2397,18 @@ ptp_getobject_tofd (PTPParams* params, uint32_t handle, int fd)
 	return ret;
 }
 
+/* Download to an existing descriptor while preserving its current position. */
+uint16_t
+ptp_getobject_tofd_bounded (PTPParams* params, uint32_t handle, uint64_t size, int fd)
+{
+	PTPDataHandler handler;
+	uint16_t ret = ptp_init_fd_handler (&handler, fd);
+	if (ret != PTP_RC_OK) return ret;
+	ret = ptp_getobject_to_handler_bounded(params, handle, size, &handler);
+	ptp_exit_fd_handler (&handler);
+	return ret;
+}
+
 /**
  * ptp_getpartialobject:
  * params:	PTPParams*
@@ -5716,6 +5728,16 @@ ptp_android_getpartialobject64 (PTPParams* params, uint32_t handle, uint64_t off
 	/* casts due to varargs otherwise pushing 64bit values on the stack */
 	PTP_CNT_INIT(ptp, PTP_OC_ANDROID_GetPartialObject64, handle, ((uint32_t)offset & 0xFFFFFFFF), (uint32_t)(offset >> 32), maxbytes);
 	return ptp_transaction(params, &ptp, PTP_DP_GETDATA, 0, object, len);
+}
+
+/* Streams a 64-bit partial read without allocating a full-chunk buffer. */
+uint16_t
+ptp_android_getpartialobject64_to_handler (PTPParams* params, uint32_t handle, uint64_t offset,
+                                         uint32_t maxbytes, PTPDataHandler *handler)
+{
+    PTPContainer ptp;
+    PTP_CNT_INIT(ptp, PTP_OC_ANDROID_GetPartialObject64, handle, (uint32_t)offset, (uint32_t)(offset >> 32), maxbytes);
+    return ptp_transaction_new(params, &ptp, PTP_DP_GETDATA, 0, handler);
 }
 
 uint16_t

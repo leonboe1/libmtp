@@ -5451,10 +5451,12 @@ int LIBMTP_Get_File_To_File_Descriptor(LIBMTP_mtpdevice_t *device,
   ptp_usb->current_transfer_callback = callback;
   ptp_usb->current_transfer_callback_data = data;
 
+  uint64_t filesize = mtpfile->filesize;
+
   // Don't need mtpfile anymore
   LIBMTP_destroy_file_t(mtpfile);
 
-  ret = ptp_getobject_tofd(params, id, fd);
+  ret = ptp_getobject_tofd_bounded(params, id, filesize, fd);
 
   ptp_usb->callback_active = 0;
   ptp_usb->current_transfer_callback = NULL;
@@ -5519,6 +5521,8 @@ int LIBMTP_Get_File_To_Handler(LIBMTP_mtpdevice_t *device,
   ptp_usb->current_transfer_callback = callback;
   ptp_usb->current_transfer_callback_data = data;
 
+  uint64_t filesize = mtpfile->filesize;
+
   // Don't need mtpfile anymore
   LIBMTP_destroy_file_t(mtpfile);
 
@@ -5532,7 +5536,7 @@ int LIBMTP_Get_File_To_Handler(LIBMTP_mtpdevice_t *device,
   handler.putfunc = put_func_wrapper;
   handler.priv = &mtp_handler;
 
-  ret = ptp_getobject_to_handler(params, id, &handler);
+  ret = ptp_getobject_to_handler_bounded(params, id, filesize, &handler);
 
   ptp_usb->callback_active = 0;
   ptp_usb->current_transfer_callback = NULL;
@@ -9347,6 +9351,7 @@ int LIBMTP_SendPartialObject(LIBMTP_mtpdevice_t *device, uint32_t const id,
   ret = ptp_android_sendpartialobject(params, id, offset, data, size);
   if (ret == PTP_RC_OK)
       return 0;
+  add_ptp_error_to_errorstack(device, ret, "LIBMTP_SendPartialObject: transaction failed.");
   return -1;
 }
 
@@ -9365,6 +9370,7 @@ int LIBMTP_BeginEditObject(LIBMTP_mtpdevice_t *device, uint32_t const id)
   ret = ptp_android_begineditobject(params, id);
   if (ret == PTP_RC_OK)
       return 0;
+  add_ptp_error_to_errorstack(device, ret, "LIBMTP_BeginEditObject: transaction failed.");
   return -1;
 }
 
@@ -9386,6 +9392,7 @@ int LIBMTP_EndEditObject(LIBMTP_mtpdevice_t *device, uint32_t const id)
       update_metadata_cache(device, id);
       return 0;
   }
+  add_ptp_error_to_errorstack(device, ret, "LIBMTP_EndEditObject: transaction failed.");
   return -1;
 }
 
@@ -9405,6 +9412,7 @@ int LIBMTP_TruncateObject(LIBMTP_mtpdevice_t *device, uint32_t const id,
   ret = ptp_android_truncate(params, id, offset);
   if (ret == PTP_RC_OK)
       return 0;
+  add_ptp_error_to_errorstack(device, ret, "LIBMTP_TruncateObject: transaction failed.");
   return -1;
 }
 

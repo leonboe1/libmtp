@@ -4176,6 +4176,9 @@ uint16_t ptp_getobject		(PTPParams *params, uint32_t handle,
 uint16_t ptp_getobject_with_size	(PTPParams *params, uint32_t handle,
 				unsigned char** object, unsigned int *size);
 uint16_t ptp_getobject_tofd     (PTPParams* params, uint32_t handle, int fd);
+uint16_t ptp_android_getpartialobject64_to_handler (PTPParams*, uint32_t, uint64_t, uint32_t, PTPDataHandler*);
+uint16_t ptp_getobject_tofd_bounded (PTPParams* params, uint32_t handle, uint64_t size, int fd);
+uint16_t ptp_getobject_to_handler_bounded (PTPParams* params, uint32_t handle, uint64_t size, PTPDataHandler*);
 uint16_t ptp_getobject_to_handler (PTPParams* params, uint32_t handle, PTPDataHandler*);
 uint16_t ptp_getpartialobject	(PTPParams* params, uint32_t handle, uint32_t offset,
 				uint32_t maxbytes, unsigned char** object,
