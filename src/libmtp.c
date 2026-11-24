@@ -6290,8 +6290,12 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
   uint16_t of = map_libmtp_type_to_ptp_type(filedata->filetype);
   LIBMTP_devicestorage_t *storage;
   uint32_t localph = filedata->parent_id;
+  uint32_t new_handle = 0;
   uint16_t ret;
   unsigned int i;
+
+  /* Callers use item_id to remove a partial upload after a later data failure. */
+  filedata->item_id = 0;
 
 #if 0
   // Sanity check: no zerolength files on some devices?
@@ -6435,9 +6439,6 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     if (localph == 0)
       localph = 0xFFFFFFFFU; // Set to -1
 
-    // Must be 0x00000000U for new objects
-    filedata->item_id = 0x00000000U;
-
     ret = ptp_mtp_getobjectpropssupported(params, of, &propcnt, &properties);
 
     for (i=0;i<propcnt;i++) {
@@ -6500,7 +6501,7 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     }
     free(properties);
 
-    ret = ptp_mtp_sendobjectproplist(params, &store, &localph, &filedata->item_id,
+    ret = ptp_mtp_sendobjectproplist(params, &store, &localph, &new_handle,
 				     of, filedata->filesize, props, nrofprops);
 
     /* Free property list */
@@ -6537,7 +6538,7 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     new_file.ModificationDate = time(NULL);
 
     // Create the object
-    ret = ptp_sendobjectinfo(params, &store, &localph, &filedata->item_id, &new_file);
+    ret = ptp_sendobjectinfo(params, &store, &localph, &new_handle, &new_file);
 
     if (ret != PTP_RC_OK) {
       add_ptp_error_to_errorstack(device, ret, "send_file_object_info(): "
@@ -6551,7 +6552,14 @@ static int send_file_object_info(LIBMTP_mtpdevice_t *device, LIBMTP_file_t *file
     // try to destroy this objectinfo!
   }
 
-  // Now there IS an object with this parent handle.
+  /* A rejected creation can leave request parameters in the response buffer.
+   * Publish only a usable handle returned by a successful creation. */
+  if (new_handle == 0 || new_handle == UINT32_MAX) {
+    add_error_to_errorstack(device, LIBMTP_ERROR_GENERAL,
+                            "send_file_object_info(): No valid object handle returned.");
+    return -1;
+  }
+  filedata->item_id = new_handle;
   filedata->parent_id = localph;
 
   return 0;

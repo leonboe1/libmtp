@@ -18,12 +18,14 @@ endif
 if LIBUSB1_COMPILE
 libmtp_la_SOURCES += libusb1-glue.c
 
-check_PROGRAMS = cancellable-operation-tests bounded-download-tests
+check_PROGRAMS = cancellable-operation-tests bounded-download-tests upload-handle-tests
 TESTS = $(check_PROGRAMS)
 cancellable_operation_tests_SOURCES = cancellable-operation-tests.c cancellable-operation.c
 cancellable_operation_tests_CFLAGS = @LIBUSB_CFLAGS@
 bounded_download_tests_SOURCES = bounded-download-tests.c bounded-download.c
 bounded_download_tests_CFLAGS = @LIBUSB_CFLAGS@
+upload_handle_tests_CFLAGS = @LIBUSB_CFLAGS@
+upload_handle_tests_LDADD = libmtp.la
 else
 EXTRA_DIST += libusb1-glue.c
 endif
