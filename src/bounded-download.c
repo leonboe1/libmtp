@@ -69,6 +69,42 @@ static uint16_t bounded_download_put(PTPParams *params, void *private,
     return PTP_RC_OK;
 }
 
+/* The listing size only bounds the reads. Query the device after the last
+ * response so an old listing cannot turn a prefix into a successful download. */
+static uint16_t verify_download_size(PTPParams *params, uint32_t id, uint64_t received)
+{
+    if (ptp_operation_issupported(params, PTP_OC_MTP_GetObjectPropValue)) {
+        PTPContainer command = {
+            .Code = PTP_OC_MTP_GetObjectPropValue, .Nparam = 2,
+            .Param1 = id, .Param2 = PTP_OPC_ObjectSize
+        };
+        unsigned char *data = NULL;
+        unsigned int length = 0;
+        uint16_t result = ptp_transaction(params, &command, PTP_DP_GETDATA, 0, &data, &length);
+        if (result == PTP_RC_OK) {
+            /* Devices expose ObjectSize as either UINT64 or UINT32. Decode
+             * the exact wire width to avoid comparing only the low 32 bits. */
+            int matches = data && ((length == 8 && dtoh64a(data) == received) ||
+                                   (length == 4 && received < UINT32_MAX && dtoh32a(data) == received));
+            free(data);
+            return matches ? PTP_RC_OK : PTP_RC_IncompleteTransfer;
+        }
+        if (result != PTP_RC_OperationNotSupported && result != PTP_RC_MTP_Invalid_ObjectPropCode &&
+            result != PTP_RC_MTP_ObjectProp_Not_Supported)
+            return result;
+    }
+
+    /* Plain PTP devices have a 32-bit GetObjectInfo size. Its saturation
+     * sentinel and the decoder's low word for extended layouts are ambiguous. */
+    PTPObjectInfo info = {0};
+    uint16_t result = ptp_getobjectinfo(params, id, &info);
+    if (result == PTP_RC_OK && (!info.ObjectFormat || params->ocs64 ||
+                                info.ObjectSize >= UINT32_MAX || info.ObjectSize != received))
+        result = PTP_RC_IncompleteTransfer;
+    ptp_free_objectinfo(&info);
+    return result;
+}
+
 /* Finish each partial response before honoring cancellation.
  * This keeps the session synchronized without draining a multi-GB GetObject. */
 uint16_t ptp_getobject_to_handler_bounded(PTPParams *params, uint32_t id,
@@ -109,7 +145,13 @@ uint16_t ptp_getobject_to_handler_bounded(PTPParams *params, uint32_t id,
             result = PTP_ERROR_CANCEL;
             break;
         }
-        if (offset == size) break;
+        if (offset == size) {
+            result = verify_download_size(params, id, offset);
+            if (result == PTP_RC_OK && usb->current_transfer_callback &&
+                usb->current_transfer_callback(offset, size, usb->current_transfer_callback_data))
+                result = PTP_ERROR_CANCEL;
+            break;
+        }
 
         uint32_t count = size - offset > chunk_size ? chunk_size : (uint32_t)(size - offset);
 
@@ -129,7 +171,7 @@ uint16_t ptp_getobject_to_handler_bounded(PTPParams *params, uint32_t id,
         result = use64 ? ptp_android_getpartialobject64_to_handler(params, id, offset, count, &bounded_handler)
                        : ptp_getpartialobject_to_handler(params, id, (uint32_t)offset, count, &bounded_handler);
         if (result == PTP_RC_OK)
-            result = sink.received == 0 ? PTP_ERROR_IO : sink.result;
+            result = sink.received == 0 ? PTP_RC_IncompleteTransfer : sink.result;
         if (result != PTP_RC_OK) break;
         offset += sink.received;
         usb->current_transfer_complete = offset;

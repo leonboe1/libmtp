@@ -17,8 +17,41 @@ static int writer_cancel, writer_calls;
 static uint16_t transport_error;
 static uint64_t received, last_progress, expected_total, next_offset;
 static uint32_t largest_request;
-static int progress_inside_transaction;
-static int progress_clock_ticks;
+static uint64_t actual_size;
+static int size_width, supports_size, size_queries, info_queries, grow_after_read, cancel_during_check;
+static uint16_t size_error, info_error;
+static int progress_inside_transaction, progress_clock_ticks;
+
+/* Fresh device metadata is independent of the cached listing size. */
+uint16_t ptp_transaction(PTPParams *p, PTPContainer *command, uint16_t flags,
+                         uint64_t sendlen, unsigned char **data, unsigned int *length) {
+    assert(p == &params && !in_transaction && !usb.callback_active);
+    assert(command->Code == PTP_OC_MTP_GetObjectPropValue && command->Nparam == 2);
+    assert(command->Param1 == 42 && command->Param2 == PTP_OPC_ObjectSize);
+    assert(flags == PTP_DP_GETDATA && sendlen == 0);
+    size_queries++;
+    if (cancel_during_check) cancel_requested = 1;
+    if (size_error) return size_error;
+    *length = size_width;
+    *data = calloc(1, 8);
+    assert(*data);
+    htod64a(*data, actual_size);
+    return PTP_RC_OK;
+}
+
+uint16_t ptp_getobjectinfo(PTPParams *p, uint32_t id, PTPObjectInfo *info) {
+    assert(p == &params && id == 42 && !in_transaction && !usb.callback_active);
+    info_queries++;
+    if (info_error) return info_error;
+    info->ObjectFormat = PTP_OFC_Undefined;
+    info->ObjectSize = actual_size > UINT32_MAX ? UINT32_MAX : actual_size;
+    return PTP_RC_OK;
+}
+
+void ptp_free_objectinfo(PTPObjectInfo *info) {
+    (void)info;
+}
+
 int clock_gettime(clockid_t clock, struct timespec *value) {
     assert(clock == CLOCK_MONOTONIC);
     value->tv_sec = progress_clock_ticks / 50;
@@ -40,6 +73,10 @@ static uint16_t partial(PTPParams *p, uint32_t id, uint64_t offset,
     if (!transport_error) {
         uint32_t length = malformed == 1 ? 0 : malformed == 2 ? count + 1 :
                           short_chunk && count > 1 ? count / 2 : count;
+        if (!malformed) {
+            uint64_t remaining = actual_size > offset ? actual_size - offset : 0;
+            if (remaining < length) length = (uint32_t)remaining;
+        }
         unsigned char bytes[16384];
         memset(bytes, 0x5a, sizeof(bytes));
         for (uint32_t sent = 0; sent < length;) {
@@ -48,6 +85,7 @@ static uint16_t partial(PTPParams *p, uint32_t id, uint64_t offset,
             sent += block;
         }
         next_offset += length;
+        if (grow_after_read) actual_size++;
     }
     in_transaction = 0;
     return transport_error ? transport_error : PTP_RC_OK;
@@ -111,7 +149,11 @@ static void reset(uint64_t size) {
     writer_cancel = writer_calls = 0;
     transport_error = 0;
     received = last_progress = next_offset = largest_request = 0;
-    expected_total = size;
+    expected_total = actual_size = size;
+    grow_after_read = cancel_during_check = 0;
+    size_width = 8;
+    supports_size = 1;
+    size_queries = info_queries = size_error = info_error = 0;
     progress_inside_transaction = progress_clock_ticks = 0;
     usb.callback_active = 1;
     usb.current_transfer_callback = progress;
@@ -119,10 +161,11 @@ static void reset(uint64_t size) {
 }
 
 static uint16_t download(void) {
-    uint16_t operations[2];
+    uint16_t operations[3];
     params.deviceinfo.Operations_len = 0;
     if (supports32) operations[params.deviceinfo.Operations_len++] = PTP_OC_GetPartialObject;
     if (supports64) operations[params.deviceinfo.Operations_len++] = PTP_OC_ANDROID_GetPartialObject64;
+    if (supports_size) operations[params.deviceinfo.Operations_len++] = PTP_OC_MTP_GetObjectPropValue;
     params.deviceinfo.Operations = operations;
     PTPDataHandler handler = {0};
     handler.priv = &received;
@@ -136,6 +179,54 @@ static uint16_t download(void) {
 }
 
 int main(void) {
+    /* A cached prefix, including an empty one, must never complete a move. */
+    for (int use64 = 0; use64 <= 1; use64++) {
+        for (int listed = 0; listed <= 7; listed += 7) {
+            reset(listed);
+            supports64 = use64;
+            actual_size = 23;
+            assert(download() == PTP_RC_IncompleteTransfer);
+            assert(received == listed && size_queries == 1);
+        }
+    }
+
+    reset(7);
+    grow_after_read = 1;
+    assert(download() == PTP_RC_IncompleteTransfer && received == 7);
+    reset(23);
+    actual_size = 7;
+    assert(download() == PTP_RC_IncompleteTransfer && received == 7 && size_queries == 0);
+    reset(7);
+    cancel_during_check = 1;
+    assert(download() == PTP_ERROR_CANCEL && size_queries == 1);
+    reset(7);
+    actual_size += UINT64_C(1) << 32;
+    assert(download() == PTP_RC_IncompleteTransfer);
+    reset(7);
+    size_width = 4;
+    assert(download() == PTP_RC_OK);
+    reset(0);
+    size_width = 3;
+    assert(download() == PTP_RC_IncompleteTransfer && info_queries == 0);
+    reset(7);
+    size_error = PTP_ERROR_IO;
+    assert(download() == PTP_ERROR_IO && info_queries == 0);
+    reset(7);
+    size_error = PTP_RC_MTP_ObjectProp_Not_Supported;
+    assert(download() == PTP_RC_OK && info_queries == 1);
+    reset(7);
+    supports_size = 0;
+    actual_size = 23;
+    assert(download() == PTP_RC_IncompleteTransfer && info_queries == 1);
+    reset(7);
+    supports_size = 0;
+    params.ocs64 = 1;
+    assert(download() == PTP_RC_IncompleteTransfer);
+    reset(0);
+    supports_size = 0;
+    info_error = PTP_RC_InvalidObjectHandle;
+    assert(download() == PTP_RC_InvalidObjectHandle);
+
     /* Cancellation latency is at most one chunk, even for an 8 GiB object. */
     reset(UINT64_C(8) * 1024 * 1024 * 1024);
     cancel_in_transaction = 1;
@@ -145,7 +236,7 @@ int main(void) {
     /* Another transfer on the same session succeeds after cancellation. */
     cancel_requested = cancel_in_transaction = 0;
     received = next_offset = last_progress = 0;
-    expected_total = 17;
+    expected_total = actual_size = 17;
     assert(download() == PTP_RC_OK && received == 17 && transactions == 2);
 
     reset(8000000);
@@ -191,7 +282,7 @@ int main(void) {
     assert(transactions == 1 && received == 0 && next_offset == 8000000 && writer_calls == 1);
     writer_cancel = 0;
     next_offset = 0;
-    expected_total = 17;
+    expected_total = actual_size = 17;
     assert(download() == PTP_RC_OK && received == 17 && transactions == 2 && writer_calls == 2);
 
     reset(100);
