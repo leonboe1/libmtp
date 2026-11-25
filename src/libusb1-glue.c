@@ -1455,7 +1455,18 @@ ptp_usb_getdata (PTPParams* params, PTPContainer* ptp, PTPDataHandler *handler)
 			break;
 		}
 		if (dtoh16(usbdata.type)!=PTP_USB_CONTAINER_DATA) {
+			uint16_t code = dtoh16(usbdata.code);
 			ret = PTP_ERROR_DATA_EXPECTED;
+			/* A rejected GETDATA command can end with just its response.
+			 * Return the device's error without reading a second response. */
+			if (dtoh16(usbdata.type) == PTP_USB_CONTAINER_RESPONSE &&
+			    rlen >= PTP_USB_BULK_HDR_LEN && rlen <= PTP_USB_BULK_REQ_LEN &&
+			    (rlen - PTP_USB_BULK_HDR_LEN) % sizeof(uint32_t) == 0 &&
+			    dtoh32(usbdata.length) == rlen &&
+			    dtoh32(usbdata.trans_id) == ptp->Transaction_ID &&
+			    ((code > PTP_RC_OK && (code & 0xf000) == 0x2000) ||
+			     (code & 0xf000) == 0xa000))
+				ret = code;
 			break;
 		}
 		if (dtoh16(usbdata.code)!=ptp->Code) {
