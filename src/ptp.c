@@ -2156,7 +2156,13 @@ ptp_getobjecthandles (PTPParams* params, uint32_t storage,
 	PTP_CNT_INIT(ptp, PTP_OC_GetObjectHandles, storage, objectformatcode, associationOH);
 	ret=ptp_transaction(params, &ptp, PTP_DP_GETDATA, 0, &data, &size);
 	if (ret == PTP_RC_OK) {
-		ptp_unpack_ArrayU32(params, data, size, objecthandles);
+		uint32_t offset = 0;
+		/* A successful GetObjectHandles dataset contains exactly one counted array. */
+		if (!ptp_unpack_uint32_t_array(params, data, &offset, size,
+		                               &objecthandles->val, &objecthandles->len) || offset != size) {
+			free_array(objecthandles);
+			ret = PTP_ERROR_IO;
+		}
 	} else {
 		if (	(storage == 0xffffffff) &&
 			(objectformatcode == 0) &&

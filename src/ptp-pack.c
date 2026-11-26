@@ -204,15 +204,15 @@ ptp_unpack_uint32_t_array(PTPParams *params, const uint8_t* data, uint32_t *offs
 	*array = NULL;
 	*arraylen = 0;
 
-	if (!data || *offset + sizeof(uint32_t) > datalen)
+	if (!data || *offset > datalen || datalen - *offset < sizeof(uint32_t))
 		return 0;
 
 	uint32_t n = dtoh32o(data, *offset);
 	if (n == 0)
 		return 1;
 
-	if (*offset + n * sizeof(uint32_t) > datalen) {
-		ptp_debug (params ,"array runs over datalen buffer end (%ld vs %u)", *offset + n * sizeof(uint32_t) , datalen);
+	if (n > (datalen - *offset) / sizeof(uint32_t)) {
+		ptp_debug(params, "array count %u exceeds remaining %u bytes", n, datalen - *offset);
 		return 0;
 	}
 
