@@ -54,6 +54,9 @@
  * make connecting/disconnecting more reliable.
  */
 #define USB_START_TIMEOUT 5000
+#define USB_START_DRAIN_TIMEOUT 100
+#define USB_START_DRAIN_READS 32
+#define USB_START_DRAIN_BLOCK (256 * 1024)
 #define USB_TIMEOUT_DEFAULT     20000
 #define USB_TIMEOUT_LONG        60000
 /*
@@ -118,7 +121,7 @@ static int init_ptp_usb(PTPParams* params,
 		PTP_USB* ptp_usb, libusb_device* dev,
 		int* interface_claim_failed);
 static short ptp_write_func(unsigned long,
-		PTPDataHandler*, void *data, unsigned long*);
+		PTPDataHandler*, void *data, unsigned long*, int);
 static short ptp_read_func (unsigned long,
 		PTPDataHandler*, void *data, unsigned long*, int);
 static short ptp_read_cancel_func (PTPParams* params,
@@ -1077,12 +1080,46 @@ ptp_read_cancel_func (
   return PTP_ERROR_CANCEL;
 }
 
+/*
+ * A previous host can leave the device sending data, which prevents it
+ * from reading the first OpenSession. On an exclusively claimed interface,
+ * drain the old data and response until the endpoint goes quiet. Bound both
+ * the time and the amount consumed. An idle device needs no retry.
+ */
+static int
+drain_startup_read(PTP_USB *ptp_usb)
+{
+  unsigned char *buffer = malloc(USB_START_DRAIN_BLOCK);
+  int saw_data = 0;
+  int drained = 0;
+  if (!buffer) return 0;
+
+  for (int i = 0; i < USB_START_DRAIN_READS; i++) {
+    int received = 0;
+    int result = USB_BULK_READ(ptp_usb->handle, ptp_usb->inep, buffer,
+                               USB_START_DRAIN_BLOCK, &received,
+                               USB_START_DRAIN_TIMEOUT);
+    if (result == LIBUSB_ERROR_TIMEOUT && received == 0) {
+      drained = saw_data;
+      break;
+    }
+    if (result != LIBUSB_SUCCESS && result != LIBUSB_ERROR_TIMEOUT)
+      break;
+    if (received > 0)
+      saw_data = 1;
+  }
+
+  free(buffer);
+  return drained;
+}
+
 static short
 ptp_write_func (
         unsigned long   size,
         PTPDataHandler  *handler,
         void            *data,
-        unsigned long   *written
+        unsigned long   *written,
+        int             open_session
 ) {
   PTP_USB *ptp_usb = (PTP_USB *)data;
   unsigned long towrite = 0;
@@ -1125,6 +1162,14 @@ ptp_write_func (
 				    towrite-usbwritten,
                                     &xwritten,
 				    ptp_usb->timeout);
+
+	    if (open_session && ret == LIBUSB_ERROR_TIMEOUT && curwrite == 0 &&
+	        xwritten == 0 && drain_startup_read(ptp_usb)) {
+	      open_session = 0;
+	      LIBMTP_USB_DEBUG("Drained a previous USB response before OpenSession.\n");
+	      ret = USB_BULK_WRITE(ptp_usb->handle, ptp_usb->outep,
+	                           bytes, towrite, &xwritten, ptp_usb->timeout);
+	    }
 
 	    LIBMTP_USB_DEBUG("USB OUT==>\n");
 
@@ -1313,7 +1358,8 @@ ptp_usb_sendreq (PTPParams* params, PTPContainer* req, int dataphase)
 		towrite,
 		&memhandler,
 		params->data,
-		&written
+		&written,
+		req->Code == PTP_OC_OpenSession
 	);
 	ptp_exit_send_memory_handler (&memhandler);
 	if (ret != PTP_RC_OK && ret != PTP_ERROR_CANCEL) {
@@ -1376,7 +1422,7 @@ ptp_usb_senddata (PTPParams* params, PTPContainer* ptp,
 		return ret;
 	}
 	/* send first part of data */
-	ret = ptp_write_func(wlen, &memhandler, params->data, &written);
+	ret = ptp_write_func(wlen, &memhandler, params->data, &written, 0);
 	ptp_exit_send_memory_handler (&memhandler);
 	if (ret != PTP_RC_OK) {
 		return ret;
@@ -1388,7 +1434,7 @@ ptp_usb_senddata (PTPParams* params, PTPContainer* ptp,
 	while(bytes_left_to_transfer > 0) {
 		unsigned long max_long_transfer = ULONG_MAX + 1 - packet_size;
 		ret = ptp_write_func (bytes_left_to_transfer > max_long_transfer ? max_long_transfer : bytes_left_to_transfer,
-			handler, params->data, &written);
+			handler, params->data, &written, 0);
 		if (ret != PTP_RC_OK)
 			break;
 		if (written == 0) {

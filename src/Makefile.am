@@ -18,7 +18,7 @@ endif
 if LIBUSB1_COMPILE
 libmtp_la_SOURCES += libusb1-glue.c
 
-check_PROGRAMS = cancellable-operation-tests bounded-download-tests upload-handle-tests usb-response-tests object-handle-list-tests
+check_PROGRAMS = cancellable-operation-tests bounded-download-tests upload-handle-tests usb-response-tests object-handle-list-tests usb-session-tests
 TESTS = $(check_PROGRAMS)
 cancellable_operation_tests_SOURCES = cancellable-operation-tests.c cancellable-operation.c
 cancellable_operation_tests_CFLAGS = @LIBUSB_CFLAGS@
@@ -31,6 +31,8 @@ object_handle_list_tests_LDADD = libmtp.la
 usb_response_tests_CFLAGS = @LIBUSB_CFLAGS@
 # Exercise the internal USB reader without exposing it in the public ABI.
 usb_response_tests_LDADD = $(libmtp_la_OBJECTS) $(libmtp_la_LIBADD)
+usb_session_tests_CFLAGS = @LIBUSB_CFLAGS@
+usb_session_tests_LDADD = $(libmtp_la_OBJECTS) $(libmtp_la_LIBADD)
 else
 EXTRA_DIST += libusb1-glue.c
 endif
