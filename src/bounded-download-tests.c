@@ -14,7 +14,8 @@ static PTPParams params;
 static int supports32, supports64, transactions, legacy, legacy_response_received, in_transaction, cancel_requested;
 static int cancel_in_transaction, cancel_on_progress, malformed, short_chunk, writer_error;
 static int writer_cancel, writer_calls;
-static uint16_t transport_error;
+static uint16_t partial_error;
+static int failing_transaction, send_data_before_error;
 static uint64_t received, last_progress, expected_total, next_offset;
 static uint32_t largest_request;
 static uint64_t actual_size;
@@ -68,9 +69,11 @@ static uint16_t partial(PTPParams *p, uint32_t id, uint64_t offset,
     assert(!usb.callback_active);
     in_transaction = 1;
     transactions++;
+    uint16_t error = transactions == failing_transaction ? partial_error : 0;
+    usb.current_transfer_complete += PTP_USB_BULK_HDR_LEN; /* command write */
     if (count > largest_request) largest_request = count;
     if (cancel_in_transaction) cancel_requested = 1;
-    if (!transport_error) {
+    if (!error || send_data_before_error) {
         uint32_t length = malformed == 1 ? 0 : malformed == 2 ? count + 1 :
                           short_chunk && count > 1 ? count / 2 : count;
         if (!malformed) {
@@ -88,7 +91,7 @@ static uint16_t partial(PTPParams *p, uint32_t id, uint64_t offset,
         if (grow_after_read) actual_size++;
     }
     in_transaction = 0;
-    return transport_error ? transport_error : PTP_RC_OK;
+    return error ? error : PTP_RC_OK;
 }
 
 uint16_t ptp_android_getpartialobject64_to_handler(PTPParams *p, uint32_t id, uint64_t offset,
@@ -104,7 +107,9 @@ uint16_t ptp_getpartialobject_to_handler(PTPParams *p, uint32_t id, uint32_t off
 }
 
 uint16_t ptp_getobject_to_handler(PTPParams *p, uint32_t id, PTPDataHandler *handler) {
-    (void)p; (void)id; (void)handler;
+    assert(p == &params && id == 42 && !in_transaction);
+    assert(usb.callback_active && usb.current_transfer_complete == 0);
+    assert(usb.current_transfer_total == expected_total + PTP_USB_BULK_HDR_LEN + sizeof(uint32_t));
     legacy++;
     in_transaction = 1;
     if (cancel_in_transaction) cancel_requested = 1;
@@ -113,6 +118,13 @@ uint16_t ptp_getobject_to_handler(PTPParams *p, uint32_t id, PTPDataHandler *han
     if (usb.current_transfer_callback &&
         usb.current_transfer_callback(0, expected_total, usb.current_transfer_callback_data))
         return PTP_ERROR_CANCEL;
+    unsigned char bytes[16384];
+    memset(bytes, 0x5a, sizeof(bytes));
+    for (uint64_t remaining = actual_size; remaining;) {
+        unsigned long count = remaining < sizeof(bytes) ? (unsigned long)remaining : sizeof(bytes);
+        assert(handler->putfunc(p, handler->priv, count, bytes) == PTP_RC_OK);
+        remaining -= count;
+    }
     legacy_response_received++;
     in_transaction = 0;
     return PTP_RC_OK;
@@ -147,7 +159,8 @@ static void reset(uint64_t size) {
     transactions = legacy = legacy_response_received = in_transaction = cancel_requested = 0;
     cancel_in_transaction = cancel_on_progress = malformed = short_chunk = writer_error = 0;
     writer_cancel = writer_calls = 0;
-    transport_error = 0;
+    partial_error = send_data_before_error = 0;
+    failing_transaction = 1;
     received = last_progress = next_offset = largest_request = 0;
     expected_total = actual_size = size;
     grow_after_read = cancel_during_check = 0;
@@ -156,6 +169,7 @@ static void reset(uint64_t size) {
     size_queries = info_queries = size_error = info_error = 0;
     progress_inside_transaction = progress_clock_ticks = 0;
     usb.callback_active = 1;
+    usb.current_transfer_total = size + PTP_USB_BULK_HDR_LEN + sizeof(uint32_t);
     usb.current_transfer_callback = progress;
     usb.current_transfer_callback_data = &received;
 }
@@ -267,9 +281,30 @@ int main(void) {
     reset(100);
     malformed = 2;
     assert(download() != PTP_RC_OK && transactions == 1 && received == 0);
-    reset(8000000);
-    transport_error = PTP_RC_OperationNotSupported;
-    assert(download() == PTP_RC_OperationNotSupported && legacy == 0 && received == 0);
+    /* Only a rejected first read with an untouched destination can restart at byte zero. */
+    for (int use64 = 0; use64 <= 1; use64++) {
+        reset(37);
+        supports64 = use64;
+        partial_error = PTP_RC_OperationNotSupported;
+        assert(download() == PTP_RC_OK && received == 37);
+        assert(transactions == 1 && legacy_response_received == 1);
+    }
+    reset(37);
+    partial_error = PTP_RC_OperationNotSupported;
+    send_data_before_error = 1;
+    assert(download() == partial_error && received == 37 && legacy == 0);
+    reset(37);
+    short_chunk = 1;
+    failing_transaction = 2;
+    partial_error = PTP_RC_OperationNotSupported;
+    assert(download() == partial_error && received == 18 && legacy == 0);
+    reset(37);
+    partial_error = PTP_ERROR_IO;
+    assert(download() == partial_error && received == 0 && legacy == 0);
+    reset(37);
+    partial_error = PTP_RC_OperationNotSupported;
+    cancel_in_transaction = 1;
+    assert(download() == PTP_ERROR_CANCEL && legacy == 0 && received == 0);
     reset(8000000);
     writer_error = 1;
     assert(download() == PTP_RC_GeneralError && transactions == 1 && received == 0);

@@ -20,6 +20,26 @@ static int fallback_progress(uint64_t sent, uint64_t total, void const * const d
     return 0;
 }
 
+/* A whole-object read may only honor cancellation before or after the transaction. */
+static uint16_t download_whole_object(PTPParams *params, uint32_t id, uint64_t size,
+                                      PTPDataHandler *handler)
+{
+    PTP_USB *usb = (PTP_USB *)params->data;
+    struct bounded_download_fallback context = {
+        usb->current_transfer_callback, usb->current_transfer_callback_data, 0
+    };
+    if (context.callback && context.callback(0, size, context.data))
+        return PTP_ERROR_CANCEL;
+    if (context.callback) {
+        usb->current_transfer_callback = fallback_progress;
+        usb->current_transfer_callback_data = &context;
+    }
+    uint16_t result = ptp_getobject_to_handler(params, id, handler);
+    usb->current_transfer_callback = context.callback;
+    usb->current_transfer_callback_data = context.data;
+    return result == PTP_RC_OK && context.cancelled ? PTP_ERROR_CANCEL : result;
+}
+
 /* Keep consuming the current response after a local writer error, so the next
  * command never sees leftover file data. No full-chunk allocation is needed. */
 struct bounded_download_sink {
@@ -117,24 +137,10 @@ uint16_t ptp_getobject_to_handler_bounded(PTPParams *params, uint32_t id,
     uint64_t offset = 0;
     uint16_t result = PTP_RC_OK;
     int callback_active = usb->callback_active;
+    const uint64_t whole_transfer_total = usb->current_transfer_total;
 
-    /* Choose compatibility fallback before writing any bytes. Never truncate an
-     * offset or restart a failed partial transfer using a whole-object request. */
-    if (!use64 && (!ptp_operation_issupported(params, PTP_OC_GetPartialObject) || size > UINT32_MAX)) {
-        struct bounded_download_fallback context = {
-            usb->current_transfer_callback, usb->current_transfer_callback_data, 0
-        };
-        if (context.callback && context.callback(0, size, context.data))
-            return PTP_ERROR_CANCEL;
-        if (context.callback) {
-            usb->current_transfer_callback = fallback_progress;
-            usb->current_transfer_callback_data = &context;
-        }
-        result = ptp_getobject_to_handler(params, id, handler);
-        usb->current_transfer_callback = context.callback;
-        usb->current_transfer_callback_data = context.data;
-        return result == PTP_RC_OK && context.cancelled ? PTP_ERROR_CANCEL : result;
-    }
+    if (!use64 && (!ptp_operation_issupported(params, PTP_OC_GetPartialObject) || size > UINT32_MAX))
+        return download_whole_object(params, id, size, handler);
 
     usb->callback_active = 0;
     usb->current_transfer_total = size;
@@ -170,6 +176,15 @@ uint16_t ptp_getobject_to_handler_bounded(PTPParams *params, uint32_t id,
         bounded_handler.putfunc = bounded_download_put;
         result = use64 ? ptp_android_getpartialobject64_to_handler(params, id, offset, count, &bounded_handler)
                        : ptp_getpartialobject_to_handler(params, id, (uint32_t)offset, count, &bounded_handler);
+        if (result == PTP_RC_OperationNotSupported && offset == 0 && sink.received == 0 &&
+            sink.result == PTP_RC_OK && !sink.cancelled) {
+            /* The device rejected its advertised command before any file data.
+             * GetObject starts at zero and its USB read limit includes the header. */
+            usb->callback_active = callback_active;
+            usb->current_transfer_total = whole_transfer_total;
+            usb->current_transfer_complete = 0;
+            return download_whole_object(params, id, size, handler);
+        }
         if (result == PTP_RC_OK)
             result = sink.received == 0 ? PTP_RC_IncompleteTransfer : sink.result;
         if (result != PTP_RC_OK) break;
