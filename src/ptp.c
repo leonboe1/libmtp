@@ -9693,11 +9693,18 @@ ptp_object_want (PTPParams *params, uint32_t handle, unsigned int want, PTPObjec
 	) {
 		ptp_debug (params, "ptp2/mtpfast: reading mtp proplist of %08x", handle);
 		/* We just want this one object, not all at once. */
-		if (PTP_RC_OK == ptp_mtp_getobjectproplist_single (params, handle, &ob->mtp_props))
-			ob->flags |= PTPOBJECT_MTPPROPLIST_LOADED;
+		ret = ptp_mtp_getobjectproplist_single (params, handle, &ob->mtp_props);
+		if (ret != PTP_RC_OK) {
+			if (ret == PTP_RC_InvalidObjectHandle) {
+				ptp_remove_object_from_cache(params, handle);
+				*retob = NULL;
+			}
+			return ret;
+		}
+		ob->flags |= PTPOBJECT_MTPPROPLIST_LOADED;
 
 		/* Override the ObjectInfo data with data from properties */
-		if ((ob->flags & PTPOBJECT_MTPPROPLIST_LOADED) && (params->device_flags & DEVICE_FLAG_PROPLIST_OVERRIDES_OI)) {
+		if (params->device_flags & DEVICE_FLAG_PROPLIST_OVERRIDES_OI) {
 
 			for_each (MTPObjectProp*, prop, ob->mtp_props) {
 				/* in case we got all subtree objects.

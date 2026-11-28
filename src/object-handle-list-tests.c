@@ -57,25 +57,40 @@ static void check_listing(unsigned char *data, unsigned int size, int expected_c
  * failures must remain distinguishable on the public file metadata API. */
 static uint16_t reject_metadata(PTPParams *params, PTPContainer *command, PTPDataHandler *destination)
 {
-    assert(command->Code == PTP_OC_GetObjectInfo && command->Param1 == 11);
+    assert(command->Param1 == 11);
     return *(uint16_t *)params->data;
 }
 
 static uint16_t request_metadata(PTPParams *params, PTPContainer *command, int phase)
 {
-    assert(command->Code == PTP_OC_GetObjectInfo && phase == PTP_DP_GETDATA);
+    uint16_t expected = params->deviceinfo.Operations_len ? PTP_OC_MTP_GetObjPropList : PTP_OC_GetObjectInfo;
+    assert(command->Code == expected && phase == PTP_DP_GETDATA);
     return PTP_RC_OK;
 }
 
-static void check_metadata_error(uint16_t code)
+static void check_metadata_error(uint16_t code, int needs_properties)
 {
     PTPParams params = {.data = &code, .byteorder = PTP_DL_LE,
                         .sendreq_func = request_metadata, .getdata_func = reject_metadata};
     LIBMTP_mtpdevice_t device = {.params = &params};
-    assert(!LIBMTP_Get_Filemetadata(&device, 11));
+    uint16_t operation = PTP_OC_MTP_GetObjPropList;
+    if (needs_properties) {
+        params.deviceinfo.Operations = &operation;
+        params.deviceinfo.Operations_len = 1;
+        params.objects.val = calloc(1, sizeof(PTPObject));
+        assert(params.objects.val);
+        params.objects.len = 1;
+        params.objects.val[0].oid = 11;
+        params.objects.val[0].flags = PTPOBJECT_OBJECTINFO_LOADED | PTPOBJECT_STORAGEID_LOADED |
+                                      PTPOBJECT_PARENTOBJECT_LOADED;
+    } else {
+        assert(!LIBMTP_Get_Filemetadata(&device, 11));
+    }
     uint16_t response = PTP_RC_OK;
     assert(!LIBMTP_Get_Filemetadata_With_Response(&device, 11, &response));
     assert(response == code);
+    if (code == PTP_RC_InvalidObjectHandle)
+        assert(params.objects.len == 0);
     char prefix[32];
     snprintf(prefix, sizeof(prefix), "PTP Layer error %04x:", code);
     LIBMTP_error_t *entry = LIBMTP_Get_Errorstack(&device);
@@ -98,8 +113,10 @@ int main(void)
     check_listing(NULL, 0, -1);
     two[0] = 0;
     check_listing(two, sizeof(two), -1); /* Handles after a declared empty list. */
-    check_metadata_error(PTP_RC_InvalidObjectHandle);
-    check_metadata_error(PTP_RC_AccessDenied);
-    check_metadata_error(PTP_ERROR_IO);
+    for (int needs_properties = 0; needs_properties <= 1; needs_properties++) {
+        check_metadata_error(PTP_RC_InvalidObjectHandle, needs_properties);
+        check_metadata_error(PTP_RC_AccessDenied, needs_properties);
+        check_metadata_error(PTP_ERROR_IO, needs_properties);
+    }
     return 0;
 }
