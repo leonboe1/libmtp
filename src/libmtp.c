@@ -7079,7 +7079,7 @@ static int set_object_filename(LIBMTP_mtpdevice_t *device,
   // See if we can modify the filename on this kind of files.
   ret = ptp_mtp_getobjectpropdesc(params, PTP_OPC_ObjectFileName, ptp_type, &opd);
   if (ret != PTP_RC_OK) {
-    add_error_to_errorstack(device, LIBMTP_ERROR_GENERAL, "set_object_filename(): "
+    add_ptp_error_to_errorstack(device, ret, "set_object_filename(): "
 			    "could not get property description.");
     return -1;
   }
@@ -7118,7 +7118,7 @@ static int set_object_filename(LIBMTP_mtpdevice_t *device,
     }
 
     if (ret != PTP_RC_OK) {
-        add_error_to_errorstack(device, LIBMTP_ERROR_GENERAL, "set_object_filename(): "
+        add_ptp_error_to_errorstack(device, ret, "set_object_filename(): "
               " could not set object property list.");
         ptp_free_objectpropdesc(&opd);
         return -1;
