@@ -102,6 +102,58 @@ static void check_metadata_error(uint16_t code, int needs_properties)
     free(params.objects.val);
 }
 
+struct metadata_reply {
+    unsigned char info[80];
+    uint16_t property_result;
+};
+
+static uint16_t request_file_metadata(PTPParams *params, PTPContainer *command, int phase)
+{
+    assert(command->Param1 == 11 && phase == PTP_DP_GETDATA);
+    assert(command->Code == PTP_OC_GetObjectInfo || command->Code == PTP_OC_MTP_GetObjPropList);
+    return PTP_RC_OK;
+}
+
+static uint16_t read_file_metadata(PTPParams *params, PTPContainer *command, PTPDataHandler *destination)
+{
+    struct metadata_reply *reply = params->data;
+    if (command->Code == PTP_OC_GetObjectInfo)
+        return destination->putfunc(params, destination->priv, sizeof(reply->info), reply->info);
+    return reply->property_result;
+}
+
+/* Read ObjectInfo over the wire, then reject the optional all-properties request. */
+static void check_object_info(struct metadata_reply *reply, uint32_t device_flags, const char *expected_name)
+{
+    uint16_t operations[] = { PTP_OC_MTP_GetObjPropList, PTP_OC_MTP_GetObjectPropsSupported };
+    PTPParams params = {.byteorder = PTP_DL_LE, .data = reply, .device_flags = device_flags,
+                        .sendreq_func = request_file_metadata, .getdata_func = read_file_metadata,
+                        .getresp_func = get_response};
+    params.deviceinfo.Operations = operations;
+    params.deviceinfo.Operations_len = 2;
+#if defined(HAVE_ICONV) && defined(HAVE_LANGINFO_H)
+    params.cd_ucs2_to_locale = (iconv_t)-1;
+#endif
+    PTP_USB usb = {0};
+    LIBMTP_mtpdevice_t device = {.params = &params, .usbinfo = &usb};
+    uint16_t response = 0;
+    LIBMTP_file_t *file = LIBMTP_Get_Filemetadata_With_Response(&device, 11, &response);
+    if (expected_name) {
+        assert(file && response == PTP_RC_OK);
+        assert(file->item_id == 11 && file->parent_id == 7 && file->storage_id == 1);
+        assert(strcmp(file->filename, expected_name) == 0 && file->filesize == 23);
+        assert(!LIBMTP_Get_Errorstack(&device));
+    } else {
+        assert(!file && response == reply->property_result);
+        assert(LIBMTP_Get_Errorstack(&device));
+    }
+    LIBMTP_destroy_file_t(file);
+    LIBMTP_Clear_Errorstack(&device);
+    for (unsigned int i = 0; i < params.objects.len; i++)
+        free(params.objects.val[i].oi.Filename);
+    free(params.objects.val);
+}
+
 int main(void)
 {
     unsigned char empty[] = {0, 0, 0, 0};
@@ -117,6 +169,37 @@ int main(void)
         check_metadata_error(PTP_RC_InvalidObjectHandle, needs_properties);
         check_metadata_error(PTP_RC_AccessDenied, needs_properties);
         check_metadata_error(PTP_ERROR_IO, needs_properties);
+        check_metadata_error(PTP_RC_OperationNotSupported, needs_properties);
     }
+    struct metadata_reply reply = {.info = { [0] = 1, [8] = 23, [38] = 7, [52] = 2, [53] = 'x' }};
+    htod16a(reply.info + 4, PTP_OFC_Undefined);
+    uint16_t unsupported[] = {PTP_RC_OperationNotSupported, PTP_RC_ParameterNotSupported,
+        PTP_RC_MTP_Invalid_ObjectPropCode, PTP_RC_MTP_ObjectProp_Not_Supported,
+        PTP_RC_SpecificationByFormatUnsupported, PTP_RC_MTP_Specification_By_Group_Unsupported,
+        PTP_RC_MTP_Specification_By_Depth_Unsupported};
+    for (unsigned int i = 0; i < sizeof(unsupported)/sizeof(unsupported[0]); i++) {
+        reply.property_result = unsupported[i];
+        check_object_info(&reply, 0, "x");
+    }
+    reply.property_result = PTP_RC_InvalidObjectHandle;
+    check_object_info(&reply, 0, NULL);
+    reply.property_result = PTP_ERROR_IO;
+    check_object_info(&reply, 0, NULL);
+    reply.property_result = PTP_RC_AccessDenied;
+    check_object_info(&reply, 0, NULL);
+    reply.property_result = PTP_RC_OperationNotSupported;
+    check_object_info(&reply, DEVICE_FLAG_PROPLIST_OVERRIDES_OI, NULL);
+    htod32a(reply.info + 8, UINT32_MAX);
+    check_object_info(&reply, 0, NULL);
+    htod32a(reply.info + 8, 23);
+    reply.info[52] = 0;
+    check_object_info(&reply, 0, NULL);
+    reply.info[52] = 255; /* Truncated UTF-16 filename. */
+    check_object_info(&reply, 0, NULL);
+    const char literal_name[] = "<none>";
+    reply.info[52] = sizeof(literal_name);
+    for (unsigned int i = 0; i < sizeof(literal_name); i++)
+        reply.info[53 + 2*i] = literal_name[i];
+    check_object_info(&reply, 0, literal_name);
     return 0;
 }

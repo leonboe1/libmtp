@@ -3889,6 +3889,7 @@ struct _PTPObject {
 #define PTPOBJECT_DIRECTORY_LOADED	(1<<3)
 #define PTPOBJECT_PARENTOBJECT_LOADED	(1<<4)
 #define PTPOBJECT_STORAGEID_LOADED	(1<<5)
+#define PTPOBJECT_FILENAME_PLACEHOLDER	(1<<6) /* GetObjectInfo had no decodable filename. */
 
 	PTPObjectInfo	oi;
 	uint32_t	canon_flags;

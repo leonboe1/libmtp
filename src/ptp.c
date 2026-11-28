@@ -9622,10 +9622,14 @@ ptp_object_want (PTPParams *params, uint32_t handle, unsigned int want, PTPObjec
 		if (ret != PTP_RC_OK) {
 			/* kill it from the internal list ... */
 			ptp_remove_object_from_cache(params, handle);
+			*retob = NULL;
 			return ret;
 		}
-		if (!ob->oi.Filename)
+		ob->flags &= ~PTPOBJECT_FILENAME_PLACEHOLDER;
+		if (!ob->oi.Filename) {
 			ob->oi.Filename = strdup("<none>");
+			ob->flags |= PTPOBJECT_FILENAME_PLACEHOLDER;
+		}
 		if (ob->flags & PTPOBJECT_PARENTOBJECT_LOADED) {
 			if (ob->oi.ParentObject != saveparent)
 				ptp_debug (params, "saved parent %08x is not the same as read via getobjectinfo %08x", ob->oi.ParentObject, saveparent);

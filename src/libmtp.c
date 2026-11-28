@@ -4357,15 +4357,12 @@ void LIBMTP_destroy_file_t(LIBMTP_file_t *file)
 }
 
 /**
- * Helper function that takes one PTP object and creates a
- * LIBMTP_file_t metadata entry.
+ * Create file metadata from ObjectInfo without issuing property queries.
  */
-static LIBMTP_file_t *obj2file(LIBMTP_mtpdevice_t *device, PTPObject *ob)
+static LIBMTP_file_t *file_from_object_info(LIBMTP_mtpdevice_t *device, const PTPObject *ob)
 {
-  PTPParams *params = (PTPParams *) device->params;
   PTP_USB *ptp_usb = (PTP_USB*) device->usbinfo;
   LIBMTP_file_t *file;
-  unsigned int i;
 
   // Allocate a new file type
   file = LIBMTP_new_file_t();
@@ -4408,6 +4405,16 @@ static LIBMTP_file_t *obj2file(LIBMTP_mtpdevice_t *device, PTPObject *ob)
 
   // This is a unique ID so we can keep track of the file.
   file->item_id = ob->oid;
+
+  return file;
+}
+
+/** Enrich the ObjectInfo metadata with MTP properties when available. */
+static LIBMTP_file_t *obj2file(LIBMTP_mtpdevice_t *device, PTPObject *ob)
+{
+  PTPParams *params = (PTPParams *) device->params;
+  LIBMTP_file_t *file = file_from_object_info(device, ob);
+  unsigned int i;
 
   /*
    * If we have a cached, large set of metadata, then use it!
@@ -4483,6 +4490,31 @@ LIBMTP_file_t *LIBMTP_Get_Filemetadata(LIBMTP_mtpdevice_t *device, uint32_t cons
   return LIBMTP_Get_Filemetadata_With_Response(device, fileid, NULL);
 }
 
+/** Only a confirmed rejection of the optional property request permits using ObjectInfo alone. */
+static int can_use_object_info(PTPParams *params, const PTPObject *ob, uint16_t response)
+{
+  switch (response) {
+  case PTP_RC_OperationNotSupported:
+  case PTP_RC_ParameterNotSupported:
+  case PTP_RC_MTP_Invalid_ObjectPropCode:
+  case PTP_RC_MTP_ObjectProp_Not_Supported:
+  case PTP_RC_SpecificationByFormatUnsupported:
+  case PTP_RC_MTP_Specification_By_Group_Unsupported:
+  case PTP_RC_MTP_Specification_By_Depth_Unsupported:
+    break;
+  default:
+    return 0;
+  }
+
+  /* Extended ObjectInfo layouts and the saturated size need MTP properties. */
+  return ob && (ob->flags & PTPOBJECT_OBJECTINFO_LOADED) &&
+         !(ob->flags & PTPOBJECT_FILENAME_PLACEHOLDER) &&
+         !(params->device_flags & DEVICE_FLAG_PROPLIST_OVERRIDES_OI) && !params->ocs64 &&
+         ob->oi.ObjectFormat && ob->oi.StorageID && ob->oi.StorageID != UINT32_MAX &&
+         ob->oi.Filename && *ob->oi.Filename &&
+         ob->oi.ObjectSize < UINT32_MAX;
+}
+
 /** Reads metadata and optionally returns the PTP result for this particular object lookup. */
 LIBMTP_file_t *LIBMTP_Get_Filemetadata_With_Response(LIBMTP_mtpdevice_t *device,
                             uint32_t const fileid, uint16_t *response)
@@ -4498,6 +4530,11 @@ LIBMTP_file_t *LIBMTP_Get_Filemetadata_With_Response(LIBMTP_mtpdevice_t *device,
   }
 
   ret = ptp_object_want(params, fileid, PTPOBJECT_OBJECTINFO_LOADED|PTPOBJECT_MTPPROPLIST_LOADED, &ob);
+  if (ret != PTP_RC_OK && can_use_object_info(params, ob, ret)) {
+    if (response)
+      *response = PTP_RC_OK;
+    return file_from_object_info(device, ob);
+  }
   if (response)
     *response = ret;
   if (ret != PTP_RC_OK) {
