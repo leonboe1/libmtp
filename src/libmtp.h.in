@@ -933,6 +933,7 @@ int LIBMTP_Get_Children(LIBMTP_mtpdevice_t *,
                         uint32_t const,
                         uint32_t **);
 LIBMTP_file_t *LIBMTP_Get_Filemetadata(LIBMTP_mtpdevice_t *, uint32_t const);
+LIBMTP_file_t *LIBMTP_Get_Filemetadata_With_Response(LIBMTP_mtpdevice_t *, uint32_t const, uint16_t *);
 int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t*, uint32_t, char const * const,
 			LIBMTP_progressfunc_t const, void const * const);
 int LIBMTP_Get_File_To_File_Descriptor(LIBMTP_mtpdevice_t*,

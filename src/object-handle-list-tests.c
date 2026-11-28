@@ -3,6 +3,8 @@
 #include "libusb-glue.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 
 struct fixture {
     unsigned char *data;
@@ -51,6 +53,40 @@ static void check_listing(unsigned char *data, unsigned int size, int expected_c
     LIBMTP_Clear_Errorstack(&device);
 }
 
+/* A child can disappear after GetObjectHandles succeeds. Other metadata
+ * failures must remain distinguishable on the public file metadata API. */
+static uint16_t reject_metadata(PTPParams *params, PTPContainer *command, PTPDataHandler *destination)
+{
+    assert(command->Code == PTP_OC_GetObjectInfo && command->Param1 == 11);
+    return *(uint16_t *)params->data;
+}
+
+static uint16_t request_metadata(PTPParams *params, PTPContainer *command, int phase)
+{
+    assert(command->Code == PTP_OC_GetObjectInfo && phase == PTP_DP_GETDATA);
+    return PTP_RC_OK;
+}
+
+static void check_metadata_error(uint16_t code)
+{
+    PTPParams params = {.data = &code, .byteorder = PTP_DL_LE,
+                        .sendreq_func = request_metadata, .getdata_func = reject_metadata};
+    LIBMTP_mtpdevice_t device = {.params = &params};
+    assert(!LIBMTP_Get_Filemetadata(&device, 11));
+    uint16_t response = PTP_RC_OK;
+    assert(!LIBMTP_Get_Filemetadata_With_Response(&device, 11, &response));
+    assert(response == code);
+    char prefix[32];
+    snprintf(prefix, sizeof(prefix), "PTP Layer error %04x:", code);
+    LIBMTP_error_t *entry = LIBMTP_Get_Errorstack(&device);
+    while (entry && (entry->errornumber != LIBMTP_ERROR_PTP_LAYER ||
+                     strncmp(entry->error_text, prefix, strlen(prefix)) != 0))
+        entry = entry->next;
+    assert(entry && "metadata failure must preserve its PTP code");
+    LIBMTP_Clear_Errorstack(&device);
+    free(params.objects.val);
+}
+
 int main(void)
 {
     unsigned char empty[] = {0, 0, 0, 0};
@@ -62,5 +98,8 @@ int main(void)
     check_listing(NULL, 0, -1);
     two[0] = 0;
     check_listing(two, sizeof(two), -1); /* Handles after a declared empty list. */
+    check_metadata_error(PTP_RC_InvalidObjectHandle);
+    check_metadata_error(PTP_RC_AccessDenied);
+    check_metadata_error(PTP_ERROR_IO);
     return 0;
 }

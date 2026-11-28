@@ -4480,6 +4480,13 @@ static LIBMTP_file_t *obj2file(LIBMTP_mtpdevice_t *device, PTPObject *ob)
  */
 LIBMTP_file_t *LIBMTP_Get_Filemetadata(LIBMTP_mtpdevice_t *device, uint32_t const fileid)
 {
+  return LIBMTP_Get_Filemetadata_With_Response(device, fileid, NULL);
+}
+
+/** Reads metadata and optionally returns the PTP result for this particular object lookup. */
+LIBMTP_file_t *LIBMTP_Get_Filemetadata_With_Response(LIBMTP_mtpdevice_t *device,
+                            uint32_t const fileid, uint16_t *response)
+{
   PTPParams *params = (PTPParams *) device->params;
   uint16_t ret;
   PTPObject *ob;
@@ -4491,8 +4498,12 @@ LIBMTP_file_t *LIBMTP_Get_Filemetadata(LIBMTP_mtpdevice_t *device, uint32_t cons
   }
 
   ret = ptp_object_want(params, fileid, PTPOBJECT_OBJECTINFO_LOADED|PTPOBJECT_MTPPROPLIST_LOADED, &ob);
-  if (ret != PTP_RC_OK)
+  if (response)
+    *response = ret;
+  if (ret != PTP_RC_OK) {
+    add_ptp_error_to_errorstack(device, ret, "LIBMTP_Get_Filemetadata(): could not read object metadata.");
     return NULL;
+  }
 
   return obj2file(device, ob);
 }
