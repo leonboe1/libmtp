@@ -5413,6 +5413,33 @@ int LIBMTP_Get_File_To_File(LIBMTP_mtpdevice_t *device, uint32_t const id,
   return ret;
 }
 
+/* Finish the download before releasing stale metadata. Uncached sessions reload
+ * the object on demand. Cached sessions need its entry for library-wide listings. */
+static int finish_file_download(LIBMTP_mtpdevice_t *device, uint32_t id, uint16_t ret)
+{
+  PTP_USB *ptp_usb = (PTP_USB *)device->usbinfo;
+  ptp_usb->callback_active = 0;
+  ptp_usb->current_transfer_callback = NULL;
+  ptp_usb->current_transfer_callback_data = NULL;
+
+  if (ret == PTP_RC_IncompleteTransfer) {
+    if (device->cached)
+      update_metadata_cache(device, id);
+    else
+      ptp_remove_object_from_cache(device->params, id);
+  }
+  if (ret == PTP_ERROR_CANCEL) {
+    add_error_to_errorstack(device, LIBMTP_ERROR_CANCELLED, "LIBMTP_Get_File_From_File_Descriptor(): Cancelled transfer.");
+    return -1;
+  }
+  if (ret != PTP_RC_OK) {
+    add_ptp_error_to_errorstack(device, ret, "LIBMTP_Get_File_To_File_Descriptor(): Could not get file from device.");
+    return -1;
+  }
+
+  return 0;
+}
+
 /**
  * This gets a file off the device to a file identified
  * by a file descriptor.
@@ -5469,20 +5496,7 @@ int LIBMTP_Get_File_To_File_Descriptor(LIBMTP_mtpdevice_t *device,
 
   ret = ptp_getobject_tofd_bounded(params, id, filesize, fd);
 
-  ptp_usb->callback_active = 0;
-  ptp_usb->current_transfer_callback = NULL;
-  ptp_usb->current_transfer_callback_data = NULL;
-
-  if (ret == PTP_ERROR_CANCEL) {
-    add_error_to_errorstack(device, LIBMTP_ERROR_CANCELLED, "LIBMTP_Get_File_From_File_Descriptor(): Cancelled transfer.");
-    return -1;
-  }
-  if (ret != PTP_RC_OK) {
-    add_ptp_error_to_errorstack(device, ret, "LIBMTP_Get_File_To_File_Descriptor(): Could not get file from device.");
-    return -1;
-  }
-
-  return 0;
+  return finish_file_download(device, id, ret);
 }
 
 /**
@@ -5549,20 +5563,7 @@ int LIBMTP_Get_File_To_Handler(LIBMTP_mtpdevice_t *device,
 
   ret = ptp_getobject_to_handler_bounded(params, id, filesize, &handler);
 
-  ptp_usb->callback_active = 0;
-  ptp_usb->current_transfer_callback = NULL;
-  ptp_usb->current_transfer_callback_data = NULL;
-
-  if (ret == PTP_ERROR_CANCEL) {
-    add_error_to_errorstack(device, LIBMTP_ERROR_CANCELLED, "LIBMTP_Get_File_From_File_Descriptor(): Cancelled transfer.");
-    return -1;
-  }
-  if (ret != PTP_RC_OK) {
-    add_ptp_error_to_errorstack(device, ret, "LIBMTP_Get_File_To_File_Descriptor(): Could not get file from device.");
-    return -1;
-  }
-
-  return 0;
+  return finish_file_download(device, id, ret);
 }
 
 
